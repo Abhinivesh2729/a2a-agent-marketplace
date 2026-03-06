@@ -51,17 +51,21 @@ def health():
     return jsonify({'status': 'ok', 'agent': AGENT_INFO['name']})
 
 
-def register():
-    try:
-        resp = requests.post(f"{REGISTRY_URL}/api/agents/register", json=AGENT_INFO, timeout=5)
-        if resp.ok:
-            logger.info("Registered with registry successfully")
-        else:
+def register(retries=5, delay=2):
+    for attempt in range(1, retries + 1):
+        try:
+            resp = requests.post(f"{REGISTRY_URL}/api/agents/register", json=AGENT_INFO, timeout=5)
+            if resp.ok:
+                logger.info("Registered with registry successfully")
+                return
             logger.warning(f"Registry returned {resp.status_code}")
-    except requests.ConnectionError:
-        logger.warning("Registry not reachable, skipping registration")
+        except requests.ConnectionError:
+            logger.warning(f"Registry not reachable (attempt {attempt}/{retries}), retrying in {delay}s...")
+            time.sleep(delay)
+    logger.error("Could not register with registry after all retries")
 
 
 if __name__ == '__main__':
+    import time
     register()
     app.run(port=8002)
