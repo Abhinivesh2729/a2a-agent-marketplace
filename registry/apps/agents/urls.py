@@ -6,4 +6,6 @@ urlpatterns = [
     path('agents/list', views.list_agents),
     path('agents/search', views.search_agents),
     path('orchestrate', views.orchestrate),
+    path('traces', views.list_traces),
+    path('traces/<str:task_id>', views.get_trace),
 ]

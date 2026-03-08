@@ -2,6 +2,7 @@
 MCP Gateway — registers itself as an agent, receives A2A requests,
 and routes them internally to mock MCP tools.
 """
+import os
 import uuid
 import logging
 import requests
@@ -12,7 +13,7 @@ logger = logging.getLogger(__name__)
 
 app = Flask(__name__)
 
-REGISTRY_URL = "http://localhost:8020"
+REGISTRY_URL = os.getenv('REGISTRY_URL', 'http://localhost:8000')
 AGENT_INFO = {
     "name": "MCP Web Search Gateway",
     "description": "Gateway that translates A2A requests to MCP tool calls (web search)",

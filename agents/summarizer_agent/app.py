@@ -1,4 +1,5 @@
 import logging
+import os
 import requests
 import ollama
 from flask import Flask, request, jsonify
@@ -8,7 +9,7 @@ logger = logging.getLogger(__name__)
 
 app = Flask(__name__)
 
-REGISTRY_URL = "http://localhost:8020"
+REGISTRY_URL = os.getenv('REGISTRY_URL', 'http://localhost:8000')
 AGENT_INFO = {
     "name": "Text Summarizer",
     "description": "Summarizes text using a local language model",

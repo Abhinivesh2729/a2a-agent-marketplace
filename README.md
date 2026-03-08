@@ -9,11 +9,12 @@ Streamlit UI
      │
      ▼
 Registry (Django :8020)        ← agents register here
-     │  POST /api/orchestrate
+  │  POST /api/orchestrate (specific or auto)
      │
      ├──► Math Agent (Flask :8001)       → evaluates math expressions
      ├──► Summarizer Agent (Flask :8002) → summarizes text via Ollama
      └──► MCP Gateway (Flask :8003)      → wraps MCP tool as an A2A agent
+  └──► Task Orchestrator (Flask :8004)→ plans and chains A2A calls across agents
 ```
 
 ## A2A Message Format
@@ -81,7 +82,13 @@ cd gateway
 python app.py
 ```
 
-**Terminal 5 — Streamlit UI**
+**Terminal 5 — Orchestrator Agent**
+```bash
+cd agents/orchestrator_agent
+python app.py
+```
+
+**Terminal 6 — Streamlit UI**
 ```bash
 cd ui
 streamlit run app.py --server.port 8512
@@ -100,6 +107,11 @@ curl -X POST http://localhost:8020/api/orchestrate \
   -H "Content-Type: application/json" \
   -d '{"input": "25 * 4 + 10", "capability": "math"}'
 
+# Send auto-orchestrated multi-agent task
+curl -X POST http://localhost:8020/api/orchestrate \
+  -H "Content-Type: application/json" \
+  -d '{"input": "calculate 2^10 - 2^8 and summarize the answer", "goal": "compute then summarize", "selection_mode": "auto"}'
+
 # Send summarization task
 curl -X POST http://localhost:8020/api/orchestrate \
   -H "Content-Type: application/json" \
@@ -107,4 +119,17 @@ curl -X POST http://localhost:8020/api/orchestrate \
 
 # Search by capability
 curl "http://localhost:8020/api/agents/search?capability=math"
+
+# List recent traces
+curl "http://localhost:8020/api/traces"
+
+# Get one trace with all A2A hops
+curl "http://localhost:8020/api/traces/<task_id>"
 ```
+
+## Auto Orchestration Notes
+
+- `Auto` mode sends the task to the `Task Orchestrator` agent.
+- The orchestrator plans a capability sequence and executes each step using A2A `POST /execute` calls.
+- If a step fails, it tries one alternate active agent with the same capability before aborting.
+- Every hop (request + response) is stored as a trace and visible in the Streamlit UI.

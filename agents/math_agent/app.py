@@ -1,6 +1,8 @@
 import ast
 import operator
 import logging
+import os
+import re
 import requests
 from flask import Flask, request, jsonify
 
@@ -9,7 +11,7 @@ logger = logging.getLogger(__name__)
 
 app = Flask(__name__)
 
-REGISTRY_URL = "http://localhost:8020"
+REGISTRY_URL = os.getenv('REGISTRY_URL', 'http://localhost:8000')
 AGENT_INFO = {
     "name": "Math Helper",
     "description": "Solves basic arithmetic and math expressions",
@@ -42,15 +44,57 @@ def _safe_eval(expr):
     return _eval(tree.body)
 
 
+def _normalize_expression(text):
+    raw = (text or '').strip().lower()
+    if not raw:
+        raise ValueError('No expression provided')
+
+    # Normalize common natural-language operator forms.
+    replacements = {
+        'multiplied by': '*',
+        'times': '*',
+        'divided by': '/',
+        'plus': '+',
+        'minus': '-',
+        'to the power of': '**',
+        'power': '**',
+        '^': '**',
+    }
+    for old, new in replacements.items():
+        raw = raw.replace(old, new)
+
+    # Special-case phrase patterns like "sum of A and B".
+    sum_match = re.search(r'sum of\s+([\d\.]+)\s+and\s+([\d\.]+)', raw)
+    if sum_match:
+        return f"{sum_match.group(1)}+{sum_match.group(2)}"
+
+    # Keep only arithmetic tokens and separators.
+    cleaned = re.sub(r'[^0-9\+\-\*\/\(\)\.%\s]', ' ', raw)
+    candidates = [seg.strip() for seg in re.findall(r'[0-9\+\-\*\/\(\)\.%\s]+', cleaned) if seg.strip()]
+
+    if not candidates:
+        raise ValueError('No arithmetic expression found in input')
+
+    # Pick the richest segment (most likely expression) and normalize spaces.
+    expr = max(candidates, key=len)
+    expr = re.sub(r'\s+', ' ', expr).strip()
+
+    if not re.search(r'\d', expr) or not re.search(r'[\+\-\*\/%]', expr):
+        raise ValueError(f'No valid arithmetic operators found in input: {text}')
+
+    return expr
+
+
 @app.route('/execute', methods=['POST'])
 def execute():
     data = request.get_json()
     task_id = data.get('task_id', 'unknown')
-    expr = data.get('input', '')
+    raw_input = data.get('input', '')
 
-    logger.info(f"[{task_id}] Math task: {expr}")
+    logger.info(f"[{task_id}] Math task: {raw_input}")
 
     try:
+        expr = _normalize_expression(raw_input)
         result = _safe_eval(expr)
         return jsonify({'task_id': task_id, 'status': 'success', 'result': str(result), 'error': None})
     except Exception as e:
