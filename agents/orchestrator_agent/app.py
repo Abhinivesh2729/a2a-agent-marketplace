@@ -118,10 +118,45 @@ def _task_needs_search(text, goal):
     return any(token in combined for token in search_tokens)
 
 
+def _parse_requested_lines(context):
+    lower = (context or '').lower()
+    numeric = re.search(r'\b(\d{1,2})\s*lines?\b', lower)
+    if numeric:
+        return max(1, min(12, int(numeric.group(1))))
+
+    word_map = {
+        'one': 1,
+        'two': 2,
+        'three': 3,
+        'four': 4,
+        'five': 5,
+        'six': 6,
+    }
+    for word, value in word_map.items():
+        if re.search(rf'\b{word}\s+lines?\b', lower):
+            return value
+    return None
+
+
+def _is_summary_capability(capability):
+    return (capability or '').lower() in {'summarization', 'text', 'nlp'}
+
+
 def _summary_instruction(goal_or_context):
     context = (goal_or_context or '').lower()
+    lines = _parse_requested_lines(context)
+
+    if 'json' in context:
+        return (
+            'Summarize this result in JSON format with keys "summary", "key_points", and "result" when relevant. '
+            'After the JSON, add a short plain-English explanation. Input: {{previous_result}}'
+        )
     if 'email' in context or 'mail format' in context:
         return 'Write a concise email-style summary for this result: {{previous_result}}'
+    if 'bullet' in context or 'points' in context:
+        return 'Summarize this result as concise bullet points: {{previous_result}}'
+    if lines:
+        return f'Summarize this result in about {lines} lines (best effort): {{{{previous_result}}}}'
     return 'Summarize this result in 1-2 sentences: {{previous_result}}'
 
 
@@ -145,7 +180,7 @@ def _post_process_plan(plan, task_input, goal, requested_capability, agents):
     needs_math = _task_needs_math(task_input)
     needs_summary = _task_needs_summary(task_input, goal)
     has_math = any(step['capability'] == 'math' for step in processed)
-    has_summary = any(step['capability'] == 'summarization' for step in processed)
+    has_summary = any(_is_summary_capability(step['capability']) for step in processed)
 
     # Guarantee two-hop orchestration for tasks that require both compute + summarization.
     if needs_math and not has_math and _resolve_capability('math', supported):
@@ -160,8 +195,15 @@ def _post_process_plan(plan, task_input, goal, requested_capability, agents):
         )
 
     summary_cap = _resolve_capability('summarization', supported) or _resolve_capability('text', supported)
+    summary_context = f"{task_input} {goal}".strip()
+
+    # Normalize summary instructions so downstream agent receives a clear format request.
+    if needs_summary:
+        for step in processed:
+            if _is_summary_capability(step['capability']):
+                step['instruction'] = _summary_instruction(summary_context)
+
     if needs_summary and not has_summary and summary_cap:
-        summary_context = f"{task_input} {goal}"
         processed.append(
             {
                 'step': len(processed) + 1,
@@ -203,6 +245,9 @@ def _post_process_plan(plan, task_input, goal, requested_capability, agents):
                     'instruction': _summary_instruction(f"{task_input} {goal}"),
                     'preferred_agent': '',
                 }
+            elif picked and _is_summary_capability(desired_cap):
+                picked = dict(picked)
+                picked['instruction'] = _summary_instruction(summary_context)
             if picked:
                 minimal.append(dict(picked))
         if minimal:
@@ -322,8 +367,12 @@ def _materialize_instruction(instruction, previous_result, original_task, capabi
     text = instruction or original_task
     if '{{previous_result}}' in text:
         text = text.replace('{{previous_result}}', str(previous_result))
-    elif previous_result is not None and capability in {'summarization', 'text', 'nlp'}:
-        text = f"{text}\n\nUse this computed result as input: {previous_result}"
+    elif previous_result is not None and _is_summary_capability(capability):
+        # Keep summarization input clean and centered on the computed output.
+        if instruction and instruction != original_task:
+            text = f"{instruction}\n\nInput result:\n{previous_result}"
+        else:
+            text = f"Summarize this result:\n{previous_result}"
     elif previous_result is not None and text == original_task:
         # Keep downstream steps context-rich when template is not provided.
         text = f'{original_task}\n\nPrevious step result:\n{previous_result}'

@@ -68,14 +68,18 @@ def _normalize_expression(text):
     if sum_match:
         return f"{sum_match.group(1)}+{sum_match.group(2)}"
 
-    # Keep only arithmetic tokens and separators.
+    # Keep only arithmetic tokens and separators, then extract true expressions.
     cleaned = re.sub(r'[^0-9\+\-\*\/\(\)\.%\s]', ' ', raw)
-    candidates = [seg.strip() for seg in re.findall(r'[0-9\+\-\*\/\(\)\.%\s]+', cleaned) if seg.strip()]
+    expr_pattern = re.compile(
+        r'(?:\d+(?:\.\d+)?|\([^\)]+\))\s*(?:\*\*|[\+\-\*\/%])\s*(?:\d+(?:\.\d+)?|\([^\)]+\))'
+        r'(?:\s*(?:\*\*|[\+\-\*\/%])\s*(?:\d+(?:\.\d+)?|\([^\)]+\)))*'
+    )
+    candidates = [match.group(0).strip() for match in expr_pattern.finditer(cleaned)]
 
     if not candidates:
         raise ValueError('No arithmetic expression found in input')
 
-    # Pick the richest segment (most likely expression) and normalize spaces.
+    # Prefer the longest valid-looking arithmetic chunk.
     expr = max(candidates, key=len)
     expr = re.sub(r'\s+', ' ', expr).strip()
 
