@@ -114,6 +114,7 @@ def _task_needs_search(text, goal):
         'look up',
         'find',
         'google',
+        'formula',
     ]
     return any(token in combined for token in search_tokens)
 
@@ -181,6 +182,8 @@ def _post_process_plan(plan, task_input, goal, requested_capability, agents):
     needs_summary = _task_needs_summary(task_input, goal)
     has_math = any(step['capability'] == 'math' for step in processed)
     has_summary = any(_is_summary_capability(step['capability']) for step in processed)
+    needs_search = _task_needs_search(task_input, goal)
+    has_search = any(step['capability'] in ('search', 'web_search', 'lookup') for step in processed)
 
     # Guarantee two-hop orchestration for tasks that require both compute + summarization.
     if needs_math and not has_math and _resolve_capability('math', supported):
@@ -193,6 +196,17 @@ def _post_process_plan(plan, task_input, goal, requested_capability, agents):
                 'preferred_agent': '',
             },
         )
+
+    # Add search step if task requires looking up information first.
+    if needs_search and not has_search:
+        search_cap = _resolve_capability('search', supported)
+        if search_cap:
+            processed.insert(0, {
+                'step': 1,
+                'capability': search_cap,
+                'instruction': task_input,
+                'preferred_agent': '',
+            })
 
     summary_cap = _resolve_capability('summarization', supported) or _resolve_capability('text', supported)
     summary_context = f"{task_input} {goal}".strip()
@@ -230,7 +244,30 @@ def _post_process_plan(plan, task_input, goal, requested_capability, agents):
 
     # Keep execution practical: enforce minimal required chain for common mixed-intent tasks.
     final_sequence = processed
-    if needs_math and needs_summary:
+    if needs_search and needs_math:
+        search_cap = _resolve_capability('search', supported)
+        math_cap = _resolve_capability('math', supported)
+        desired_order = [cap for cap in [search_cap, math_cap] if cap]
+        if needs_summary and summary_cap:
+            desired_order.append(summary_cap)
+        minimal = []
+        for desired_cap in desired_order:
+            picked = next((step for step in processed if step['capability'] == desired_cap), None)
+            if not picked:
+                picked = {
+                    'step': len(minimal) + 1,
+                    'capability': desired_cap,
+                    'instruction': task_input,
+                    'preferred_agent': '',
+                }
+            if _is_summary_capability(desired_cap) and picked:
+                picked = dict(picked)
+                picked['instruction'] = _summary_instruction(summary_context)
+            if picked:
+                minimal.append(dict(picked))
+        if minimal:
+            final_sequence = minimal
+    elif needs_math and needs_summary:
         summary_cap = _resolve_capability('summarization', supported) or _resolve_capability('text', supported)
         desired_order = [_resolve_capability('math', supported), summary_cap]
         minimal = []
@@ -278,9 +315,17 @@ def _fallback_plan(task_input, requested_capability):
     needs_summary = _task_needs_summary(task_input, '')
     needs_search = _task_needs_search(task_input, '')
 
-    if needs_math:
+    if needs_search and needs_math:
         plan.append({
             'step': 1,
+            'capability': 'search',
+            'instruction': task_input,
+            'reason': 'Look up formula/information before computation',
+        })
+
+    if needs_math:
+        plan.append({
+            'step': len(plan) + 1,
             'capability': 'math',
             'instruction': task_input,
             'reason': 'Detected arithmetic expression in the task',
@@ -373,9 +418,9 @@ def _materialize_instruction(instruction, previous_result, original_task, capabi
             text = f"{instruction}\n\nInput result:\n{previous_result}"
         else:
             text = f"Summarize this result:\n{previous_result}"
-    elif previous_result is not None and text == original_task:
-        # Keep downstream steps context-rich when template is not provided.
-        text = f'{original_task}\n\nPrevious step result:\n{previous_result}'
+    elif previous_result is not None:
+        # Keep downstream steps context-rich even when the LLM rewrites the instruction.
+        text = f'{text}\n\nPrevious step result:\n{previous_result}'
     return text
 
 

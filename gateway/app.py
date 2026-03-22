@@ -26,6 +26,7 @@ _MOCK_RESULTS = {
     "python": "Python is a high-level programming language known for simplicity and readability.",
     "django": "Django is a high-level Python web framework that encourages rapid development.",
     "machine learning": "Machine learning is a subset of AI that allows systems to learn from data.",
+    "abhi's formula": "input_number + 27 = result",
     "default": "Search completed. Here are the most relevant results for your query.",
 }
 

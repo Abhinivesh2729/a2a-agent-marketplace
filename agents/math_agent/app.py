@@ -89,6 +89,52 @@ def _normalize_expression(text):
     return expr
 
 
+def _try_formula_substitution(text):
+    """
+    Extract a formula from search results and substitute variables with numbers
+    from the original query. Handles patterns like 'variable + 27 = result'.
+    """
+    parts = re.split(r'(?:Previous step result|Result):\s*\n?', text, flags=re.IGNORECASE)
+    query_part = parts[0].strip() if parts else ''
+    formula_part = parts[1].strip() if len(parts) > 1 else ''
+    if not formula_part:
+        return None
+
+    # Match: expression = identifier (e.g., "input_number + 27 = result")
+    formula_re = re.compile(r'(.+?)\s*=\s*([a-zA-Z_]\w*)\s*$', re.MULTILINE)
+    match = formula_re.search(formula_part)
+    if not match:
+        return None
+
+    expression = match.group(1).strip()
+
+    # Find unique variable names in order of appearance
+    seen = set()
+    ordered_vars = []
+    for m in re.finditer(r'[a-zA-Z_]\w*', expression):
+        v = m.group()
+        if v not in seen:
+            seen.add(v)
+            ordered_vars.append(v)
+
+    if not ordered_vars:
+        return None
+
+    # Find numeric values from the original query
+    input_numbers = re.findall(r'\b(\d+(?:\.\d+)?)\b', query_part)
+    if not input_numbers:
+        return None
+
+    # Substitute each variable with the corresponding input number
+    result_expr = expression
+    for i, var in enumerate(ordered_vars):
+        num = input_numbers[i] if i < len(input_numbers) else input_numbers[0]
+        result_expr = re.sub(r'\b' + re.escape(var) + r'\b', num, result_expr)
+
+    result_expr = result_expr.replace('^', '**')
+    return result_expr
+
+
 @app.route('/execute', methods=['POST'])
 def execute():
     data = request.get_json()
@@ -102,6 +148,15 @@ def execute():
         result = _safe_eval(expr)
         return jsonify({'task_id': task_id, 'status': 'success', 'result': str(result), 'error': None})
     except Exception as e:
+        # Fallback: try extracting a formula from search results and substituting values
+        substituted = _try_formula_substitution(raw_input)
+        if substituted:
+            try:
+                expr = _normalize_expression(substituted)
+                result = _safe_eval(expr)
+                return jsonify({'task_id': task_id, 'status': 'success', 'result': str(result), 'error': None})
+            except Exception:
+                pass
         return jsonify({'task_id': task_id, 'status': 'error', 'result': None, 'error': str(e)}), 400
 
 
